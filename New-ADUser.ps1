@@ -3,26 +3,55 @@
  #
  # (&(objectCategory=organizationalUnit)(distinguishedName=*OU=BenutzerVerwaltung,*))
  #>
-
-
 # Importiert das ActiveDirectory Modul
 Import-Module ActiveDirectory
+
+# Funktion zum Generieren eines komplexen Kennworts
+function Generate-ComplexPassword {
+    param (
+        [int]$length = 30
+    )
+
+    $lowercase = 'abcdefghijklmnopqrstuvwxyz'
+    $uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    $numbers = '1234567890'
+    $specialChars = '!@#$%^&*()-_=+{}[]|\;:",.<>?'
+
+    $password = -join ($lowercase | Get-Random) +
+               -join ($uppercase | Get-Random) +
+               -join ($numbers | Get-Random) +
+               -join ($specialChars | Get-Random)
+
+    $allChars = $lowercase + $uppercase + $numbers + $specialChars
+    $password += -join (1..($length - 4) | ForEach-Object { Get-Random -InputObject $allChars })
+
+    return -join ($password.ToCharArray() | Get-Random -Count $length)
+}
 
 # Parameterdefinitionen
 param(
     [string]$GivenName,
     [string]$Surname,
-    [string]$SamAccountName,
     [string]$UserPrincipalName,
     [string]$DisplayName,
     [string]$Email,
-    [string]$Password,
-    [string]$Path = "OU=Users,DC=example,DC=com", # Hier die gewünschte Organisationseinheit (OU) und Domain angeben
-    [string]$TemplateUserSamAccountName, # Der SAM-Account-Name des Benutzers, von dem die Gruppen kopiert werden sollen
-    [string]$DefaultGroupName = "StandardGruppe" # Hier den Namen der Standardgruppe angeben, falls abweichend
+    [string]$Path = "OU=Users,DC=example,DC=com",
+    [string]$DefaultGroupName,
+    [string]$TemplateUserSamAccountName
 )
 
-# Erstellt den Benutzer
+# Generiere SAM Account Name
+$SamAccountName = ($GivenName[0] + $Surname).ToLower()
+$count = 1
+while (Get-ADUser -Filter { SamAccountName -eq $SamAccountName }) {
+    $SamAccountName = ($GivenName[0] + $Surname + $count).ToLower()
+    $count++
+}
+
+# Generiere Passwort
+$Password = Generate-ComplexPassword
+
+# Erstelle den Benutzer
 New-ADUser -GivenName $GivenName `
           -Surname $Surname `
           -SamAccountName $SamAccountName `
@@ -34,17 +63,19 @@ New-ADUser -GivenName $GivenName `
           -AccountPassword (ConvertTo-SecureString -AsPlainText $Password -Force) `
           -Enabled $true
 
-# Fügt den neu erstellten Benutzer zur Standardgruppe hinzu
-Add-ADGroupMember -Identity $DefaultGroupName -Members $SamAccountName
+# Füge den neu erstellten Benutzer zur optionalen Standardgruppe hinzu, falls angegeben
+if ($DefaultGroupName) {
+    Add-ADGroupMember -Identity $DefaultGroupName -Members $SamAccountName
+}
 
 # Überprüft, ob ein TemplateUserSamAccountName angegeben wurde
 if ($TemplateUserSamAccountName) {
-    # Ruft die Gruppen des angegebenen Benutzers ab
     $groups = Get-ADUser -Identity $TemplateUserSamAccountName -Properties MemberOf | Select-Object -ExpandProperty MemberOf
-
-    # Fügt den neu erstellten Benutzer diesen Gruppen hinzu
     foreach ($group in $groups) {
         Add-ADGroupMember -Identity $group -Members $SamAccountName
     }
 }
+
+# Ausgabe des generierten Passworts
+Write-Output "Generiertes Passwort für $SamAccountName: $Password"
 
